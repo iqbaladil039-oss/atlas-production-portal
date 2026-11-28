@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident approval</title>
+<style>
+  body{margin:0;background:#F4F7FB;color:#0F172A;font:15px/1.5 "Segoe UI",Tahoma,sans-serif}
+  .bar{background:#0A1E39;color:#fff;padding:14px 20px;font-weight:700}
+  .bar span{font-weight:500;opacity:.85;margin-left:8px}
+  .card{max-width:640px;margin:32px auto;background:#fff;border:1px solid #E2E8F0;border-radius:16px;padding:24px 22px;box-shadow:0 10px 24px rgba(15,23,42,.06)}
+  h1{margin:0 0 8px;font-size:20px;color:#0B1F4D}
+  p{margin:0 0 12px;color:#334155}
+  .mute{color:#64748B;font-size:13px}
+  .rows{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:16px 0;font-size:14px}
+  .rows div:nth-child(odd){color:#64748B;font-weight:600}
+  textarea{width:100%;min-height:80px;border:1px solid #CBD5E1;border-radius:9px;padding:8px 10px;font:inherit;box-sizing:border-box;margin-top:6px}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  button{border:0;border-radius:9px;padding:9px 16px;font:inherit;font-weight:600;cursor:pointer}
+  .ok{background:#1D4ED8;color:#fff}
+  .no{background:#fff;color:#9F1239;border:1px solid #FECACA}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}
+  .pending{background:#FEF3C7;color:#92400E}
+  .approved{background:#DCFCE7;color:#166534}
+  .rejected{background:#FEE2E2;color:#B91C1C}
+  .err{color:#B91C1C}
+</style>
+</head>
+<body>
+  <div class="bar">Atlas Production <span>Safe Man Working Hours</span></div>
+  <div class="card" id="box"><p class="mute">Loading…</p></div>
+<script>
+(function(){
+var FN='https://eimupkkaybhhitjbtjdw.supabase.co/functions/v1/incident-approval';
+var TYPES={'near-miss':'Near Miss','recordable':'Recordable','loss-time':'Loss Time Accident','major':'Major','fire':'Fire','property-damage':'Property Damaged','first-aid':'First-aid','lost-time':'Loss Time Accident','other':'Other'};
+var q=new URLSearchParams(location.search), action=(q.get('action')||'').toLowerCase(), token=q.get('token')||'';
+var box=document.getElementById('box');
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function dash(s){return (s==null||String(s).trim()==='')?'—':esc(s)}
+function typ(v){return esc(TYPES[v]||v||'—')}
+function fmt(iso){if(!iso)return '—';var d=new Date(iso);if(isNaN(d))return '—';
+ var p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Karachi',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d),g={};
+ p.forEach(function(x){g[x.type]=x.value});return g.day+'-'+g.month+'-'+g.year+' '+g.hour+':'+g.minute}
+function summary(rec){
+ if(!rec)return '';
+ return '<div class="rows"><div>Shop</div><div>'+dash(rec.shop)+'</div><div>Area</div><div>'+dash(rec.area)+'</div><div>Date &amp; time</div><div>'+esc(fmt(rec.incident_datetime))+'</div><div>Category</div><div>'+typ(rec.incident_type)+'</div><div>Reported by</div><div>'+dash(rec.reported_by)+'</div></div>';
+}
+function tag(st){return '<span class="tag '+(st||'')+'">'+esc((st||'').charAt(0).toUpperCase()+(st||'').slice(1))+'</span>'}
+function show(html){box.innerHTML=html}
+function fail(msg){show('<h1>This approval link is not valid</h1><p class="err">'+esc(msg||'The link may be incorrect or past its 30-day limit.')+'</p>')}
+function decided(rec){
+ var st=rec&&rec.status, when=st==='approved'?rec.approved_at:rec.rejected_at;
+ show('<h1>This report has already been '+esc(st||'decided')+'</h1><p>'+tag(st)+(when?' · '+esc(fmt(when)):'')+'</p>'+summary(rec)+(st==='rejected'&&rec.reject_reason?'<p class="mute">Reason: '+dash(rec.reject_reason)+'</p>':''));
+}
+function pending(rec){
+ if(action==='reject'){
+  show('<h1>Reject this incident report?</h1><p>The report will be kept on file as rejected and will not appear in the portal list.</p>'+summary(rec)+
+   '<label class="mute">Reason (optional)</label><textarea id="reason" maxlength="1000"></textarea><div class="btns"><button class="no" type="button" id="go">Reject</button></div>');
+ }else{
+  show('<h1>Approve this incident report?</h1><p>Approving makes the report visible in the portal so it can be printed and signed.</p>'+summary(rec)+
+   '<div class="btns"><button class="ok" type="button" id="go">Approve</button></div>');
+ }
+ var b=document.getElementById('go'); if(b)b.onclick=decide;
+}
+function decide(){
+ var btn=document.getElementById('go'); if(btn)btn.disabled=true;
+ var reason=(document.getElementById('reason')||{}).value||'';
+ fetch(FN,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({action:action==='reject'?'reject':'approve',token:token,reason:reason,format:'json'})})
+  .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j}})})
+  .then(function(x){
+    if(x.j&&x.j.state==='approved') show('<h1>Incident report approved</h1><p>'+tag('approved')+'</p>'+summary(x.j.rec)+'<p class="mute">'+(x.j.message||'It now appears under View Incident Report.')+'</p>');
+    else if(x.j&&x.j.state==='rejected') show('<h1>Incident report rejected</h1><p>'+tag('rejected')+'</p>'+summary(x.j.rec)+(x.j.rec&&x.j.rec.reject_reason?'<p class="mute">Reason: '+dash(x.j.rec.reject_reason)+'</p>':'')+'<p class="mute">'+(x.j.message||'')+'</p>');
+    else fail((x.j&&x.j.message)||'The decision could not be saved.');
+  }).catch(function(){fail('The decision could not be saved.'); if(btn)btn.disabled=false});
+}
+if(action!=='approve'&&action!=='reject'){fail('This link is incomplete. Use the Approve or Reject button in the email.');return}
+if(!token){fail('This approval link is not valid.');return}
+fetch(FN+'?action=preview&token='+encodeURIComponent(token)+'&format=json',{headers:{'Accept':'application/json'}})
+ .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j}})})
+ .then(function(x){
+   if(!x.j||x.j.state==='invalid'||x.j.state==='expired') return fail(x.j&&x.j.message);
+   if(x.j.state==='pending') return pending(x.j.rec);
+   decided(x.j.rec);
+ }).catch(function(){fail('Could not load this report.')});
+})();
+</script>
+</body>
+</html>
